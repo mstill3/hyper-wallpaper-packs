@@ -1,183 +1,151 @@
 'use strict';
 
-exports.onRendererWindow = (win) => {
+// For reference look here: https://hyper.is/
 
-  function waitForElement() {
-    if(typeof win.rpc !== "undefined" && typeof win.store !== "undefined"){
-      win.rpc.on('TOGGLE_WALLPAPER_PROFILE', direction => {
-        win.store.dispatch({
-          type: 'CHANGE_WALLPAPER_PROFILE',
-          direction: direction
-        })
-      });
-    }
-    else{
-      setTimeout(waitForElement, 50);
-    }
-  }
 
-  waitForElement();
-};
-
+// A custom Redux middleware that can intercept any action.
+// Subsequently, we invoke the `thunk` middleware,
+// which means your middleware can `next` thunks.
 exports.middleware = (store) => (next) => (action) => {
-  if ('CONFIG_LOAD' === action.type || 'CONFIG_RELOAD' === action.type) {
-    store.dispatch({
-      type: 'SET_WALLPAPER_CONFIG',
-      bgProfiles: action.config.wallpapers
-    });
-  }
+    if (action.type === 'CONFIG_LOAD' ||
+        action.type === 'CONFIG_RELOAD') {
+        store.dispatch({
+            type: 'SET_WALLPAPER_CONFIG',
+            wallpaperPackConfig: action.config.wallpaperPack
+        });
+    }
 
-  if ('INIT' === action.type ) {
-    console.log('INIT');
-    store.dispatch({
-      type: 'INIT_ACTIVE_WALLPAPER'
-    })
-  }
-
-  next(action);
+    next(action);
 };
 
+
+// A custom reducer for the `ui`, `sessions` or `termgroups` state shape.
+// Here we can listen for our actions & modify the state accordingly.
 exports.reduceUI = (state, action) => {
-  switch (action.type) {
-    case 'INIT_ACTIVE_WALLPAPER':
-      return state.set('activeWallpaper', 0);
-    case 'SET_WALLPAPER_CONFIG':
-      return state.set('wallpaperConfig', action.bgProfiles);
-    case 'CHANGE_WALLPAPER_PROFILE':
-      if (action.direction === 'next') {
-        return state.set('activeWallpaper', (state.activeWallpaper + 1) % state.wallpaperConfig.length);
-      } else if (action.direction === 'prev') {
-        return state.set('activeWallpaper', (state.activeWallpaper - 1 + state.wallpaperConfig.length) % state.wallpaperConfig.length);
-      } else {
-        throw new Error(`Unexpected value for activeWallpaper: ${action.direction}`);
-      }
-  }
-  return state;
+    switch (action.type) {
+        case 'SET_WALLPAPER_CONFIG':
+            return state.set('wallpaperPackConfig', action.wallpaperPackConfig);
+    }
+    return state;
 };
 
+// A custom mapper for the state properties that container components receive.
 exports.mapTermsState = (state, map) => {
     return Object.assign(map, {
-      activeWallpaper: state.ui.activeWallpaper,
-      wallpaperConfig: state.ui.wallpaperConfig,
-      changeWallpaperProfile: state.ui.changeWallpaperProfile
-  });
+        wallpaperPackConfig: state.ui.wallpaperPackConfig,
+    });
 };
 
+// v0.5.0+. Allows you to decorate the user's configuration.
+// Useful for theming or custom parameters for your plugin.
 exports.decorateConfig = (config) => {
 
-  const cssString = `
-    .hyper-wallpaper-wrapper {
-      width: 100%;
-      height: 100%;
+    const cssString = `
+    /* Set wallpaper to fill screen */
+    .hyper-wallpaper-wrapper, .hyper-wallpaper-wrapper .profile {
+        width: 100%;
+        height: 100%;
     }
-    .hyper-wallpaper-wrapper .profile {
-      width: 100%;
-      height: 100%;
-    }
+    
+    /* Semi-white faded wallpaper filter */
     .terms_termGroup {
-      background: rgba(25, 25, 25, 0.7) !important
+        background: rgba(25, 25, 25, 0.7) !important
     }
-    .xterm-viewport {
-      background-color: rgba(0, 0, 0, 0) !important;
+    
+    /* Set the tab color */
+    .header_header {
+        background-color: rgba(22, 22, 22);
+    }
+    
+    /* Hide scroll bar */
+    .xterm-screen {
+        width: 735px;
+        height: 0px !important; 
     }
     `;
 
-  return Object.assign({}, config, {
-    css: `
+    return Object.assign({}, config, {
+        css: `
       ${config.css || ''} 
       ${cssString}
       `
-  });
+    });
 };
 
+// Passes down props from `<TermGroup>` to the `<Term>` component.
 exports.getTermProps = (uid, parentProps, props) => {
-  props.backgroundColor = 'rgba(0, 0, 0, 0)';
-  return props;
+    // Make the terminal background transparent
+    props.backgroundColor = 'rgba(0, 0, 0, 0)';
+    return props;
 };
 
-exports.decorateTerms = (Terms, {React, notify, Notification}) => {
+// The `decorateTerm` hook allows our extension to return a higher order react component.
+// It supplies us with:
+// - Term: The terminal component.
+// - React: The entire React namespace.
+// - notify: Helper function for displaying notifications in the operating system.
+//
+// The portions of this code dealing with the particle simulation are heavily based on:
+// - https://atom.io/packages/power-mode
+// - https://github.com/itszero/rage-power/blob/master/index.jsx
+exports.decorateTerms = (Terms, {React}) => {
+    class WallPaperComponent extends React.Component {
 
-  class WallPaperComponent extends React.Component {
-
-    constructor(props, context) {
-      super(props, context)
-    }
-
-    render() {
-      return React.createElement('div', {
-        className: 'profile',
-        style: {
-          backgroundImage: this.props.image ? `url(file://${this.props.filePath}` : null,
-          backgroundSize: this.props.image ? this.props.size : null,
-          backgroundPosition: 'center',
-          backgroundColor: !this.props.image ? this.props.color : null,
-          display: this.props.isActive ? 'block' : 'none'
-        },
-      })
-    }
-  }
-
-  return class extends React.Component {
-
-    constructor(props, context) {
-      super(props, context);
-      this.componentDidMount = this.componentDidMount.bind(this);
-      this.componentDidUpdate = this.componentDidUpdate.bind(this);
-    }
-
-    componentDidMount() {}
-
-    componentDidUpdate(prevProps, prevState, snapshot) {
-      if (prevProps.activeWallpaper !== this.props.activeWallpaper) {
-        console.debug(`Active wallpaper has been changed to: ${this.props.activeWallpaper}`);
-      }
-  }
-
-    render () {
-      return React.createElement(Terms, Object.assign({}, this.props, {
-        customChildrenBefore: React.createElement('div', {className: 'hyper-wallpaper-wrapper'},
-          ...this.props.wallpaperConfig.map((config, index) => {
-            return React.createElement(WallPaperComponent, {
-              image: config.image,
-              filePath: config.filePath,
-              size: config.size,
-              color: config.color,
-              isActive: (this.props.activeWallpaper === index)
-            });
-          })
-        )
-      }));
-    }
-  };
-};
-
-exports.decorateMenu = (menu) => {
-
-  let indexForPluginItemInMenu = menu.findIndex((element) => {
-    return element['label'] === 'Plugins'
-  });
-
-  menu[indexForPluginItemInMenu]['submenu'].push({
-    type: 'separator'
-  });
-  menu[indexForPluginItemInMenu]['submenu'].push({
-    label: 'hyper-wallpaper',
-    submenu: [
-      {
-        label: 'Switch to previous profile',
-        accelerator: 'command+o',
-        click: (_menuItem, browserWindow, _event) => {
-          browserWindow.rpc.emit('TOGGLE_WALLPAPER_PROFILE', 'prev');
+        constructor(props, context) {
+            super(props, context)
         }
-      }, {
-        label: 'Switch to next profile',
-        accelerator: 'command+p',
-        click: (_menuItem, browserWindow, _event) => {
-          browserWindow.rpc.emit('TOGGLE_WALLPAPER_PROFILE', 'next');
-        }
-      }
-    ]
-  });
 
-  return menu
+        render() {
+
+            const getImageFile = (packName) => {
+                const imageMap = {
+                    "jellyfish": "vino-li-gGX1fJkmw3k-unsplash.jpg"
+                };
+
+                switch (packName) {
+                    case "jellyfish":
+                        return imageMap["jellyfish"];
+                    default:
+                        return imageMap["jellyfish"];
+                }
+            };
+
+            const getImagePath = (packName) =>
+                 packName ?
+                    `url(file://${__dirname}/res/${getImageFile(packName)}` :
+                    null;
+
+            return React.createElement('div', {
+                className: 'profile',
+                style: {
+                    backgroundImage: getImagePath(this.props.name),
+                    backgroundSize: "cover",
+                    backgroundPosition: 'center',
+                    backgroundColor: null,
+                    display: 'block'
+                },
+            })
+        }
+    }
+
+    return class extends React.Component {
+
+        constructor(props, context) {
+            super(props, context);
+        }
+
+        render () {
+            return React.createElement(Terms, Object.assign({}, this.props, {
+                customChildrenBefore: React.createElement(
+                    'div',
+                    {
+                        className: 'hyper-wallpaper-wrapper'
+                    },
+                    React.createElement(WallPaperComponent, {
+                        name: this.props.wallpaperPackConfig.name,
+                    })
+                )
+            }));
+        }
+    };
 };

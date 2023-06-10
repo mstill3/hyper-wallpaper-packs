@@ -1,5 +1,5 @@
 {
-  "name": "hyper-wallpaper",
+  "name": "hyper-wallpaper-packs",
   "version": "1.0.0",
   "main": "index.js",
   "keywords": [
@@ -9,12 +9,12 @@
     "wallpaper",
     "background"
   ],
-  "description": "Extension for wallpaper with your favorite images in Hyper terminal",
+  "description": "Extension for prebuilt wallpaper packs in Hyper terminal",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/inside-hakumai/hyper-wallpaper.git"
+    "url": "git+https://github.com/mstill3/hyper-wallpaper-packs.git"
   },
-  "author": "inside-hakumai",
+  "author": "mstill3",
   "license": "MIT",
   "private": false
 }
